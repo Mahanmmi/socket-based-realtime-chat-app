@@ -1,23 +1,25 @@
 const mongoose = require("mongoose");
 
 const schema = mongoose.Schema({
-    username : {
-        type : String,
+    username: {
+        type: String,
         required: true,
         trim: true,
         unique: true
     },
-    userSocket : {
-        type : Object,
-        required : true
+    userIP: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    userPort: {
+        type: Number,
+        required: true,
+        trim: true
     }
-});
-
-schema.virtual('userIP').get(function() {
-    return this.userSocket.remoteAddress;
-});
-schema.virtual('userPort').get(function() {
-    return this.userSocket.remotePort;
+}, {
+    toObject: { virtuals: true },
+    toJSON: { virtuals: true }
 });
 
 const User = new mongoose.model("User", schema);
