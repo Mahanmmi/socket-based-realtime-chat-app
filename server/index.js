@@ -5,7 +5,7 @@ const net = require('net');
 const express = require('express');
 const mongoose = require('mongoose');
 
-const { createUser, changeUsername, getUsers } = require('./userManager');
+const { createUser, changeUsername, getUsers, deleteUser } = require('./userManager');
 const User = require('./models/User');
 
 const PORT = 8778;
@@ -22,6 +22,7 @@ mongoose.connect("mongodb://127.0.0.1:27017/node-chat-app", {
 
 //Creating socket pool
 const socketPool = new Map();
+const roomNames = [];
 
 //Creating socket server
 const app = express();
@@ -136,8 +137,8 @@ function fileSendStart(socket, fileSend) {
 async function rename(socket, payload) {
     const oldName = payload.old;
     const newName = payload.username;
-    
-    if(oldName === newName) {
+
+    if (oldName === newName) {
         socket.emit('renamed', newName);
         return;
     }
@@ -148,11 +149,37 @@ async function rename(socket, payload) {
             newName
         });
         socket.emit('renamed', newName);
-    } catch(e) {
+    } catch (e) {
         console.log(e.message);
         socket.emit('notrenamed');
     }
 
+}
+
+function addRoom(socket, payload) {
+    const { name, selection } = payload;
+    if (roomNames.includes(name.toLowerCase())) {
+        socket.emit('notroom');
+        return;
+    }
+    roomNames.push(name);
+    socketPool.set(name, {
+        identifier: name,
+        isRoom: true
+    });
+    socket.join(name);
+    for (sel of selection) {
+        const targetIO = socketPool.get(sel.id);
+        socket.to(targetIO.identifier).emit('joinroom', {
+            name,
+            selection
+        });
+    }
+    socket.emit('joinroom', {
+        name,
+        selection
+    });
+    socket.emit('doneroom');
 }
 
 io.on('connection', (socket) => {
@@ -210,5 +237,23 @@ io.on('connection', (socket) => {
     });
     socket.on('rename', async (payload) => {
         await rename(socket, payload);
+    });
+    socket.on('addroom', (payload) => {
+        addRoom(socket, payload);
+    });
+    socket.on('joinroom', (payload) => {
+        socket.join(payload);
+    })
+
+
+    socket.on('disconnect', async () => {
+        const user = await deleteUser(socket.request.connection.remoteAddress, socket.request.connection.remotePort);
+        const stringID = user._id.toString();
+        const userId = parseInt("0x" + stringID.substring(stringID.length - 6, stringID.length));
+        socketPool.delete(userId);
+        socket.broadcast.emit('uleave', {
+            id: userId,
+            username: user.username
+        });
     });
 });

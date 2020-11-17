@@ -14,6 +14,11 @@
             <RenameModal :show-err="regErr" v-if="renameMode && !isLoading" @sendRename="sendRename"
                          @cancelRename="cancelRename"/>
         </transition>
+        <transition enter-active-class="animate__animated animate__fadeIn"
+                    leave-active-class="animate__animated animate__fadeOut" mode="out-in">
+            <AddRoomModal :users="users" v-if="addRoomMode && !isLoading" @sendAddRoom="sendAddRoom"
+                         @cancelAddRoom="cancelAddRoom"/>
+        </transition>
         <chat-window
                 style="height: 98%"
                 :currentUserId="currentUserId"
@@ -28,6 +33,7 @@
                 @fetchMessages="fetchMessages"
                 @sendMessage="sendMessage"
                 @openFile="openFile"
+                @addRoom="addRoom"
         />
     </div>
 </template>
@@ -43,6 +49,7 @@
 
     import {configClient, sendFileInit} from "../helperFuncions";
     import RenameModal from "./RenameModal";
+    import AddRoomModal from "./AddRoomModal";
 
 
     let client;
@@ -51,6 +58,7 @@
     export default {
         name: "ChatPanel",
         components: {
+            AddRoomModal,
             RenameModal,
             RegisterModal,
             ChatWindow,
@@ -60,8 +68,10 @@
             return {
                 isLoading: true,
                 renameMode: false,
+                addRoomMode: false,
                 user: undefined,
                 regErr: false,
+                users: [],
                 roomId: null,
                 rooms: [],
                 messages: [],
@@ -146,6 +156,34 @@
                 if (action.name === "rename") {
                     this.renameMode = true;
                 }
+            },
+            sendAddRoom(name, selection) {
+                const new_selection = []
+                for (const s of selection) {
+                    if(s.selected) {
+                        new_selection.push(s);
+                    }
+                }
+                if(new_selection.length) {
+                    this.isLoading = true;
+                    new_selection.push({
+                        id: this.currentUserId,
+                        username: this.user.username,
+                        selected: true
+                    });
+                    client.emit('addroom', {
+                        name,
+                        selection: new_selection
+                    })
+                } else {
+                    this.addRoomMode = false
+                }
+            },
+            cancelAddRoom() {
+                this.addRoomMode = false;
+            },
+            addRoom() {
+                this.addRoomMode = true;
             }
         },
         mounted() {

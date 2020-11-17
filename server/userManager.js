@@ -45,8 +45,14 @@ async function changeUsername(newName, oldName) {
     }
 }
 
+// Delete disconnected user
+async function deleteUser(ip, port){
+    return (await User.findOneAndDelete({userIP: ip, userPort: port}));
+}
+
 module.exports = {
     createUser,
     changeUsername,
+    deleteUser,
     getUsers
 };

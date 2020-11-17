@@ -19,6 +19,7 @@ function registered(payload) {
     pageThis.user = payload.you;
     pageThis.currentUserId = payload.you.id;
     pageThis.regErr = false;
+    pageThis.users = payload.users;
     for (const user of payload.users) {
         const room = {
             roomId: user.id,
@@ -53,6 +54,7 @@ function notRegistered() {
 
 function joined(payload) {
     const user = payload;
+    pageThis.users.push(user);
     const room = {
         roomId: user.id,
         roomName: user.username,
@@ -196,6 +198,11 @@ function notRenamed() {
 
 function someoneRenamed(payload) {
     const { oldName, newName } = payload;
+    for(const user of pageThis.users){
+        if (user.username === oldName) {
+            user.username = newName;
+        }
+    }
     for (const room of pageThis.rooms) {
         for (const user of room.users) {
             if (user.username === oldName) {
@@ -219,7 +226,52 @@ function someoneRenamed(payload) {
     });
 }
 
+function joinRoom(payload) {
+    const {name, selection} = payload;
+    console.log(payload);
+    client.emit('joinroom', name);
 
+    const room = {
+        roomId: name,
+        roomName: name,
+        unreadCount: 0,
+        users: [],
+        typingUsers: [],
+        messages: []
+    }
+    for (const sel of selection) {
+        room.users.push({
+            _id: sel.id,
+            username: sel.username
+        });
+    }
+    console.log(room.users);
+    pageThis.rooms.push(room);
+}
+
+function userLeft(payload) {
+    const { username, id } = payload;
+    let ind;
+    for (const i in pageThis.users) {
+        if(username === pageThis.users[i].username){
+            ind = i;
+            break;
+        }
+    }
+    pageThis.users.splice(ind,1);
+    for (const i in pageThis.rooms) {
+        if(id === ((pageThis.rooms)[i]).roomId) {
+            ind = i;
+            break;
+        }
+    }
+    pageThis.rooms.splice(ind, 1);
+    pageThis.$notify({
+        group: 'notif',
+        type: 'error',
+        text: `${username} left the party :(`
+    });
+}
 
 function configClient(socket, page) {
     client = socket;
@@ -250,6 +302,25 @@ function configClient(socket, page) {
     });
     client.on('sorenamed', (payload) => {
         someoneRenamed(payload);
+    });
+    client.on('joinroom', (payload) => {
+        joinRoom(payload);
+    });
+    client.on('uleave', (payload) => {
+        userLeft(payload);
+    })
+    client.on('notroom', () => {
+        pageThis.$notify({
+            group: 'notif',
+            type: 'error',
+            text: `Group name already taken`
+        });
+        pageThis.isLoading = false;
+        pageThis.addRoomMode = false;
+    });
+    client.on('doneroom', () => {
+        pageThis.isLoading = false;
+        pageThis.addRoomMode = false;
     });
 }
 
