@@ -1,69 +1,162 @@
 <template>
-    <chat-window
-            :currentUserId="currentUserId"
-            :rooms="rooms"
-            :messages="messages"
-            :theme="theme"
-            @fetchMessages="fetchMessages"
-    />
+    <div>
+        <loading
+                :active.sync="isLoading"
+                :is-full-page="true"
+        >
+        </loading>
+        <transition enter-active-class="animate__animated animate__fadeIn"
+                    leave-active-class="animate__animated animate__fadeOut" mode="out-in">
+            <RegisterModal :show-err="regErr" v-if="!user && !isLoading" @sendRegister="register"/>
+        </transition>
+        <transition enter-active-class="animate__animated animate__fadeIn"
+                    leave-active-class="animate__animated animate__fadeOut" mode="out-in">
+            <RenameModal :show-err="regErr" v-if="renameMode && !isLoading" @sendRename="sendRename"
+                         @cancelRename="cancelRename"/>
+        </transition>
+        <chat-window
+                style="height: 98%"
+                :currentUserId="currentUserId"
+                :rooms="rooms"
+                :roomId="roomId"
+                :messages="messages"
+                :theme="theme"
+                :menuActions="menuActions"
+                :messagesLoaded="messagesLoaded"
+                :loadingRooms="false"
+                @menuActionHandler="menuActionHandler"
+                @fetchMessages="fetchMessages"
+                @sendMessage="sendMessage"
+                @openFile="openFile"
+        />
+    </div>
 </template>
 
 <script>
-    import ChatWindow from 'vue-advanced-chat'
-    import 'vue-advanced-chat/dist/vue-advanced-chat.css'
+    import ChatWindow from 'vue-advanced-chat';
+    import 'vue-advanced-chat/dist/vue-advanced-chat.css';
+    import Loading from 'vue-loading-overlay';
+    import 'vue-loading-overlay/dist/vue-loading.css';
+
+    import {io} from 'socket.io-client';
+    import RegisterModal from "./RegisterModal";
+
+    import {configClient, sendFileInit} from "../helperFuncions";
+    import RenameModal from "./RenameModal";
+
+
+    let client;
+
 
     export default {
         name: "ChatPanel",
         components: {
-            ChatWindow
+            RenameModal,
+            RegisterModal,
+            ChatWindow,
+            Loading
         },
         data() {
             return {
-                rooms: [
+                isLoading: true,
+                renameMode: false,
+                user: undefined,
+                regErr: false,
+                roomId: null,
+                rooms: [],
+                messages: [],
+                currentUserId: undefined,
+                messagesLoaded: true,
+                menuActions: [
                     {
-                        roomId: 1,
-                        roomName: 'Room 1',
-                        unreadCount: 4,
-                        lastMessage: {
-                            content: 'Last message received',
-                            sender_id: 1234,
-                            username: 'John Doe',
-                            timestamp: '10:20',
-                            date: 123242424,
-                            seen: false,
-                            new: true
-                        },
-                        users: [
-                            {
-                                _id: 1234,
-                                username: 'John Doe',
-                                status: {
-                                    state: 'online',
-                                    last_changed: 'today, 14:30'
-                                }
-                            },
-                            {
-                                _id: 4321,
-                                username: 'John Snow',
-                                status: {
-                                    state: 'offline',
-                                    last_changed: '14 July, 20:00'
-                                }
-                            }
-                        ],
-                        typingUsers: [4321]
+                        name: 'rename',
+                        title: 'Change Username'
                     }
                 ],
-                messages: [],
-                currentUserId: 1234,
                 theme: 'dark'
             }
         },
         methods: {
-            fetchMessages({room, options = {}}) {
-                if (options.reset) this.resetMessages()
-                room;
+            findRoom(id) {
+                for (const room of this.rooms) {
+                    if (room.roomId === id) {
+                        return room;
+                    }
+                }
+            },
+            register(username) {
+                this.isLoading = true;
+                client.emit('register', username);
+            },
+            sendRename(username) {
+                this.isLoading = true;
+                client.emit('rename', {
+                    old: this.user.username,
+                    username
+                });
+            },
+            cancelRename() {
+                this.renameMode = false;
+                this.regErr = false;
+            },
+            fetchMessages({room}) {
+                this.messagesLoaded = false;
+                this.messages = room.messages;
+                this.roomId = room.roomId;
+                room.unreadCount = 0;
+
+                return (this.messagesLoaded = true);
+            },
+            sendMessage({roomId, content, file}) {
+                const room = this.findRoom(roomId);
+                if (!file) {
+                    client.emit('message', {
+                        from: this.currentUserId,
+                        target: roomId,
+                        content
+                    });
+                    const date = new Date();
+                    const message = {
+                        _id: roomId.toString() + room.messages.length.toString(),
+                        content,
+                        sender_id: this.currentUserId,
+                        username: this.user.username,
+                        date: `${date.toDateString()}`,
+                        timestamp: `${date.getHours()}:${date.getMinutes()}`, saved: true,
+                        distributed: true,
+                        seen: true,
+                        disable_actions: true,
+                        disable_reactions: true,
+                        file
+                    }
+                    room.messages.push(message);
+                    room.lastMessage = message;
+                } else {
+                    this.isLoading = true;
+                    sendFileInit(room, content, file);
+                }
+
+            },
+            openFile({message}) {
+                const win = window.open(message.file.url, '_blank');
+                win.focus();
+                console.log(message);
+            },
+            menuActionHandler({action}) {
+                if (action.name === "rename") {
+                    this.renameMode = true;
+                }
             }
+        },
+        mounted() {
+            this.isLoading = true;
+            client = io('127.0.0.1:8778', {
+                path: '/'
+            });
+            client.on('connect', () => {
+                this.isLoading = false;
+            });
+            configClient(client, this);
         }
     }
 </script>

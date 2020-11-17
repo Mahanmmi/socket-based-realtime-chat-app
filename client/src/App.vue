@@ -1,5 +1,6 @@
 <template>
-    <div style="height: 100vh">
+    <div style="height: 100vh;">
+        <notifications group="notif" />
 <!--        <div id="app">-->
 <!--            <img alt="Vue logo" src="./assets/logo.png">-->
 <!--            <HelloWorld msg="Welcome to Your Vue.js App"/>-->
@@ -24,12 +25,15 @@
 </script>
 
 <style>
+    body {
+        background-color: black;
+    }
     #app {
         font-family: Avenir, Helvetica, Arial, sans-serif;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
         text-align: center;
         color: #2c3e50;
-        margin-top: 60px;
+        margin: 0 0;
     }
 </style>

@@ -1,20 +1,24 @@
 const User = require('./models/User');
 
-//Generic response class
-class Response {
-    constructor(from, to, type, body) {
-        this.from = from;
-        this.to = to;
-        this.type = type;
-        this.body = body;
-    }
-}
 
+async function getUsers(excludeId) {
+    const users = [];
+    const raw_users = await User.find({ _id: { $ne: excludeId } });
+    for (const i in raw_users) {
+        const rawu = raw_users[i];
+        const user = {};
+        const stringID = rawu._id.toString();
+        user.id = parseInt("0x" + stringID.substring(stringID.length - 6, stringID.length));
+        user.username = rawu.username;
+        users.push(user);
+    }
+    return users;
+}
 
 //Create user function
 async function createUser(username, socket) {
     //Checks Uniqueness of username
-    if ((await User.find({ username: username.toLowerCase() })).length != 0 || username.toUpperCase() == "SERVER") {
+    if ((await User.find({ username: username.toLowerCase() })).length != 0) {
         throw new Error("Uniqueness error");
     } else {
         const user = new User({
@@ -28,43 +32,21 @@ async function createUser(username, socket) {
 }
 
 //Change username function
-async function changeUsername(newName, socket, from) {
+async function changeUsername(newName, oldName) {
     //Checks Uniqueness of username
-    if ((await User.find({ username: newName.toLowerCase() })).length != 0 || newName.toUpperCase() == "SERVER") {
+    if ((await User.find({ username: newName.toLowerCase() })).length !== 0) {
         throw new Error("Uniqueness error");
     } else {
-        try {
-            //Finding current user by socket ip and port
-            const user = await User.findOne({ userIP: socket.remoteAddress, userPort: socket.remotePort });
-            const oldName = user.username;
-            user.username = newName.toLowerCase();
-            await user.save();
-            return { user, oldName };
-        } catch {
-            socket.write(JSON.stringify(new Response("SERVER", from, "500", undefined)))
-            return undefined;
-        }
+        //Finding current user by oldName
+        const user = await User.findOne({ username: oldName.toLowerCase() });
+        user.username = newName.toLowerCase();
+        await user.save();
+        return user;
     }
-}
-
-//Send message function
-async function sendMessage(message, socket, socket_pool) {
-    //Finding target by user name
-    const target = await User.findOne({ username: message.to });
-    //If target name is no where to be found let the use know
-    if(!target) {
-        socket.write(JSON.stringify(new Response('SERVER', message.from, "404", "Target not found")));
-        return undefined;
-    }
-    //Get target socket from pool and send message
-    targetSocket = socket_pool.get(target.username);
-    targetSocket.write(JSON.stringify(new Response(message.from, message.to, "MESSAGE", message.body)));
-    return true;
 }
 
 module.exports = {
-    Response,
     createUser,
     changeUsername,
-    sendMessage
+    getUsers
 };

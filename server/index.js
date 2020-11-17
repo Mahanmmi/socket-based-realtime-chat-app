@@ -1,9 +1,14 @@
+const http = require('http');
 const net = require('net');
 
+
+const express = require('express');
 const mongoose = require('mongoose');
 
-const { Response, createUser, changeUsername, sendMessage } = require('./userManager');
+const { createUser, changeUsername, getUsers } = require('./userManager');
 const User = require('./models/User');
+
+const PORT = 8778;
 
 
 // Database connection initializaton
@@ -11,85 +16,199 @@ mongoose.connect("mongodb://127.0.0.1:27017/node-chat-app", {
     useNewUrlParser: true,
     useCreateIndex: true,
     useUnifiedTopology: true
+}).then(() => {
+    mongoose.connection.db.dropDatabase();
 });
 
 //Creating socket pool
-socket_pool = new Map();
+const socketPool = new Map();
 
-//Creating server
-const server = net.createServer(socket => {
-    socket.on("data", async data => {
-
-        //Parse incoming data into message object
-        const message = JSON.parse(data.toString());
-
-        //Check if its a registration message (new user) or not
-        if ((await User.find({ userIP: socket.remoteAddress, userPort: socket.remotePort })).length != 0) {
-
-            //Change username request
-            if (message.type == "CHANGE") {
-                try {
-                    const { user, oldName } = await changeUsername(message.body, socket, message.from);
-
-                    //if it's sucessful let the user know and change in socket pool
-                    if (user) {
-                        socket.write(JSON.stringify(new Response('SERVER', user.username, "210", `You are now ${user.username}`)));
-                        socket_pool.delete(oldName);
-                        socket_pool.set(user.username, socket);
-                        //TO DO Notify all other users
-                    }
-                } catch (e) {
-                    console.log(e.message);
-
-                    //New username uniqueness error
-                    socket.write(JSON.stringify(new Response("SERVER", message.from, "440", e.message)));
-                }
-            }
-
-            //Send message request
-            if (message.type == "SEND") {
-                if (sendMessage(message, socket, socket_pool)) {
-                    socket.write(JSON.stringify(new Response("SERVER", message.from, "211", "SENT")));
-                };
-            }
-
-
-        } else {
-            //Register request
-            try {
-                const user = await createUser(message.from, socket);
-
-                //if it's sucessful let the user know and add him to socket pool
-                if (user) {
-                    socket.write(JSON.stringify(new Response('SERVER', user.username, "201", `Welcome ${user.username}`)));
-                    socket_pool.set(user.username, socket);
-                    //TO DO Notify all other users
-                }
-            } catch (e) {
-                console.log(e.message);
-
-                //Username uniqueness error
-                socket.write(JSON.stringify(new Response("SERVER", "NOT REGISTERED", "440", e.message)));
-
-                //We end the connection cause we don't want any blank usernames with connections in database
-                socket.end();
-            }
-        }
-    });
-
-    //on end connection remove user from socket_pool and DB
-    socket.on("end", async () => {
-        let user;
-        for (const [key, value] of socket_pool.entries()) {
-            if (socket.remoteAddress == value.remoteAddress && socket.remotePort == value.remotePort) {
-                user = key;
-                break;
-            }
-        }
-        await User.findOneAndRemove({ username: user });
-        socket_pool.delete(user);
-        //TO DO Notify all other users
-    })
+//Creating socket server
+const app = express();
+const server = http.createServer(app);
+const io = (require('socket.io'))(server, {
+    path: '/',
+    cors: true,
+    origins: '127.0.0.1:*'
+});
+server.listen(PORT, () => {
+    console.log(`listening on *:${PORT}`);
 });
 
-server.listen(8778);
+
+// Register new client with username = payload
+async function register(socket, payload) {
+    const name = payload;
+
+    try {
+        const user = await createUser(name, socket.request.connection);
+
+        //if it's sucessful let the user know and add him to socket pool
+        if (user) {
+            const stringID = user._id.toString();
+            const userId = parseInt("0x" + stringID.substring(stringID.length - 6, stringID.length));
+
+            users = await getUsers(user._id);
+            socket.emit('registered', {
+                you: {
+                    username: name,
+                    id: userId
+                },
+                users
+            });
+
+            // Tell all other clients that he joined the party!
+            socket.broadcast.emit('joined', {
+                username: name,
+                id: userId
+            })
+
+            socketPool.set(userId, {
+                identifier: socket.id,
+                isRoom: false
+            });
+        }
+    } catch (e) {
+        console.log(e.message);
+        //Username uniqueness error
+        socket.emit('notregistered');
+    }
+}
+
+// Send message to target room/client
+function message(socket, payload) {
+    const { from, target, content } = payload;
+    console.log(payload);
+    const targetIO = socketPool.get(target);
+    if (targetIO.isRoom) {
+        socket.to(targetIO.identifier).emit('message', { from, room: targetIO.identifier, content });
+    } else {
+        socket.to(targetIO.identifier).emit('message', { from, room: from, content });
+    }
+}
+
+// File transfer initial request handler
+function fileRecieveStart(socket, payload, fileReceive) {
+    fileReceive.from = payload.from;
+    fileReceive.target = payload.target;
+    fileReceive.content = payload.content;
+    fileReceive.fileName = payload.fileName;
+    fileReceive.fileSize = payload.fileSize;
+    fileReceive.fileType = payload.fileType;
+    fileReceive.fileChunks = [];
+
+    socket.emit('sendslice');
+}
+
+function fileRecieveSlice(socket, payload, fileReceive) {
+    fileReceive.fileChunks.push(payload.slice);
+    if (!payload.isEnded) {
+        return false;
+    } else {
+        return true;
+    }
+}
+
+function fileSendStart(socket, fileSend) {
+    const { from, target, content, fileName, fileSize, fileType } = fileSend;
+    const targetIO = socketPool.get(target);
+    if (targetIO.isRoom) {
+        socket.to(targetIO.identifier).emit('startfile', { from, room: targetIO.identifier, content, fileName, fileSize, fileType });
+    } else {
+        socket.to(targetIO.identifier).emit('startfile', { from, room: from, content, fileName, fileSize, fileType });
+    }
+    let isEnded;
+    while (!isEnded) {
+        isEnded = ((fileSend.currentSlice + 1) === fileSend.fileChunks.length)
+        socket.to(targetIO.identifier).emit('receiveslice', { isEnded, slice: fileSend.fileChunks[fileSend.currentSlice] });
+        fileSend.currentSlice++;
+    }
+    fileSend.currentSlice = 0;
+    fileSend.from = undefined
+    fileSend.target = undefined
+    fileSend.content = undefined
+    fileSend.fileName = undefined
+    fileSend.fileSize = undefined
+    fileSend.fileType = undefined
+    fileSend.fileChunks = undefined
+}
+
+async function rename(socket, payload) {
+    const oldName = payload.old;
+    const newName = payload.username;
+    
+    if(oldName === newName) {
+        socket.emit('renamed', newName);
+        return;
+    }
+    try {
+        changeUsername(newName, oldName);
+        socket.broadcast.emit('sorenamed', {
+            oldName,
+            newName
+        });
+        socket.emit('renamed', newName);
+    } catch(e) {
+        console.log(e.message);
+        socket.emit('notrenamed');
+    }
+
+}
+
+io.on('connection', (socket) => {
+    console.log(socket.id);
+    console.log(socket.request.connection.remoteAddress);
+    console.log(socket.request.connection.remotePort);
+    const fileReceive = {
+        from: undefined,
+        target: undefined,
+        content: undefined,
+        fileName: undefined,
+        fileSize: undefined,
+        fileType: undefined,
+        fileChunks: undefined
+    }
+    const fileSend = {
+        from: undefined,
+        target: undefined,
+        content: undefined,
+        fileName: undefined,
+        fileSize: undefined,
+        fileType: undefined,
+        currentSlice: 0,
+        fileChunks: undefined
+    }
+
+    socket.on('register', async (payload) => {
+        await register(socket, payload);
+    });
+    socket.on('message', (payload) => {
+        message(socket, payload);
+    });
+    socket.on('filereceivestart', (payload) => {
+        fileRecieveStart(socket, payload, fileReceive);
+    });
+    socket.on('receiveslice', (payload) => {
+        if (fileRecieveSlice(socket, payload, fileReceive)) {
+            fileSend.from = fileReceive.from
+            fileSend.target = fileReceive.target
+            fileSend.content = fileReceive.content
+            fileSend.fileName = fileReceive.fileName
+            fileSend.fileSize = fileReceive.fileSize
+            fileSend.fileType = fileReceive.fileType
+            fileSend.fileChunks = fileReceive.fileChunks
+            fileSend.currentSlice = 0;
+            fileReceive.from = undefined
+            fileReceive.target = undefined
+            fileReceive.content = undefined
+            fileReceive.fileName = undefined
+            fileReceive.fileSize = undefined
+            fileReceive.fileType = undefined
+            fileReceive.fileChunks = undefined
+            fileSendStart(socket, fileSend);
+        }
+    });
+    socket.on('rename', async (payload) => {
+        await rename(socket, payload);
+    });
+});
