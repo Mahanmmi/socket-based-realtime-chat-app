@@ -26,9 +26,16 @@ const roomNames = [];
 
 //Creating socket server
 const app = express();
+
+app.get('/users', async (req, res) => {
+    const users = await getUsers(undefined);
+    console.log(users);
+    res.send(users);
+});
+
+
 const server = http.createServer(app);
 const io = (require('socket.io'))(server, {
-    path: '/',
     cors: true,
     origins: '127.0.0.1:*'
 });

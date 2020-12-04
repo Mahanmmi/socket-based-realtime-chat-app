@@ -188,9 +188,7 @@
         },
         mounted() {
             this.isLoading = true;
-            client = io('127.0.0.1:8778', {
-                path: '/'
-            });
+            client = io('127.0.0.1:8778', {});
             client.on('connect', () => {
                 this.isLoading = false;
             });

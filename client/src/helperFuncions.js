@@ -273,6 +273,21 @@ function userLeft(payload) {
     });
 }
 
+function notRoom() {
+    pageThis.$notify({
+        group: 'notif',
+        type: 'error',
+        text: `Group name already taken`
+    });
+    pageThis.isLoading = false;
+    pageThis.addRoomMode = false;
+}
+
+function doneRoom() {
+    pageThis.isLoading = false;
+    pageThis.addRoomMode = false;
+}
+
 function configClient(socket, page) {
     client = socket;
     pageThis = page;
@@ -310,17 +325,10 @@ function configClient(socket, page) {
         userLeft(payload);
     })
     client.on('notroom', () => {
-        pageThis.$notify({
-            group: 'notif',
-            type: 'error',
-            text: `Group name already taken`
-        });
-        pageThis.isLoading = false;
-        pageThis.addRoomMode = false;
+        notRoom();
     });
     client.on('doneroom', () => {
-        pageThis.isLoading = false;
-        pageThis.addRoomMode = false;
+        doneRoom();
     });
 }
 
